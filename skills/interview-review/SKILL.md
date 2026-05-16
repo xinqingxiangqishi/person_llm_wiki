@@ -1,165 +1,177 @@
 ---
 name: interview-review
-description: 把一场面试的原始记录（手打文字或口述转文字）整理成结构化复盘。抽取每个问题、记录你的真实回答、生成更好的回答、识别需要补的知识 gap，并把 gap 反向写回知识库形成闭环。使用场景：用户说"刚面完"、"帮我复盘下这场面试"、"整理面经"、"我把面试笔记给你"。不处理音视频文件（用户已表示输入是文字）。
+description: 把一场面试的原始记录（语音转文字或手打文字）整理成结构化复盘文档。支持 ASR 文本预处理（纠错别字、合并断句）。使用场景：用户说"帮我复盘"、"刚面完"、"整理面经"、"面试录音文本在这"。
 ---
 
 # Interview Review
 
-把一场面试的文字记录变成：
-1. 一份 `review.md`，给你下次面试前 5 分钟扫一眼用
-2. 一批 `q_xxxx.md` 问题卡，沉淀到题库供模拟面试和重复出现时聚合
-3. 写回 `wiki/` 的 gap 列表，让"这道题没答好"变成"下次 ingest 时要重点搞清的事"
-
-输入纯文字，不做 ASR。
+把一场面试变成：
+1. `raw.md` — ASR 清洗后的文本（原始输入丢弃）
+2. `review.md` — 逐题复盘：问题 / 我的回答 / 评分 / 亮点不足 / 改进方向 / 参考要点
+3. `q_xxxx.md` — 题目卡（供 mock-interview 使用，schema 精简）
 
 ## Local-First Rule
 
-公司名、面试官姓名、你说过的话可能敏感。一切只在本地 `llm-kb/` 目录下处理，不要 web_search 真实公司名，不要在生成的内容里塞绝对路径。用户主动要求 web_search 某个技术点的标准答案除外。
+公司名、面试原话可能敏感。一切只在本地 `llm-kb/` 处理。`web_search` 只用于明确公开的技术点（用户主动要求时）。
 
 ## 数据契约
 
-读 `skills/shared/CONTRACTS.md`（wiki 条目的 schema 在 §1，question 卡在 §3）。这个 skill 写入：
-- `llm-kb/interviews/<iv_id>/`（新建一整个目录）
-- `llm-kb/questions/q_xxxx.md`（新建或更新已有的）
-- `llm-kb/wiki/*.md` 的 `gaps` 和 `linked_from_interviews` 字段（通过脚本，不要手改 YAML）
-- `llm-kb/index/all.json`（流程末尾重建）
+读 `skills/shared/CONTRACTS.md`。写入：
+- `llm-kb/interviews/<iv_id>/`（meta.yaml、raw.md、review.md、questions.json）
+- `llm-kb/questions/q_xxxx.md`（新建或追加历史）
+- `llm-kb/wiki/*.md` 的 gaps 字段（通过脚本）
 
-## 工作流
+---
 
-Claude 走判断，脚本走确定性。**严格按顺序**：
+## 工作流（3 步）
 
-### 步骤 1：收集元数据（Claude）
+### 步骤 1：收集信息 + ASR 预处理（Claude）
 
-问用户（一次性问完，不要逐条问）：
-- 公司（可以模糊化，比如 "C-large-AI"）
+**先问用户**（一次性问完，已说过的就不问）：
+- 公司（可模糊，如"某大厂"）
 - 岗位 + 轮次
-- 日期（不说就用今天）
-- 时长
-- 这场的整体感觉 1-5 分
+- 日期（没说就用今天）
+- 时长、自评 1-5 分
 
-如果用户在第一条消息里已经说了，就不再问。
+**然后对用户提供的文本做 ASR 清洗**：
+- 纠正明显错别字（语境推断，如"在训练"→"再训练"，"这个这个"删掉一个）
+- 合并语音断句（"嗯...那个...就是说 PPO 它..."→"PPO..."）
+- 保留技术术语原貌（GRPO、KL divergence 等不要改）
+- 听不清 / 无法判断的片段标记 `[unclear]`，**不要猜**
+- **不要美化回答内容**，清洗只是去噪，不是润色
 
-### 步骤 2：创建场次目录（脚本）
+清洗完的文本即为 `raw.md` 内容，原始输入丢弃。
 
-```bash
-python skills/interview-review/scripts/new_interview.py \
-  --company "<company>" --role "<role>" --round "<round>" \
-  --date <YYYY-MM-DD> --duration <min> --rating <1-5>
-```
+### 步骤 2：完整分析，生成 JSON（Claude）
 
-脚本输出新创建的 `iv_id` 和目录路径。把用户给的原始文字直接写到 `<iv_dir>/raw.md`。
-
-### 步骤 3：抽取问题（Claude）
-
-读 `raw.md`，识别每一个独立的"面试官提问 → 候选人回答"对。原则：
-
-- **覆盖度优先**：一场 60 分钟面试通常 8-15 个实质性问题（不算寒暄）。少于 5 个一般是你漏抽了，回去再扫一遍
-- **追问算独立问题**：A 问题里的深挖追问单独成卡，不要塞进 A 的"我的回答"里
-- **不抽**：寒暄、自我介绍流水账、薪资问答、反问环节
-- **问题清洗**：写成正常的中文问句，不要保留口语 "嗯那个那个" 这种，但保留技术术语原貌
-- **回答忠实**：`my_answer.summary` 必须反映你**当时真的说了什么**，不要替你润色成"你应该这样答"。润色那是 `better_answer` 的事
-
-对每个问题，先**搜一下题库里是不是已经有这道题**：
+**先查重**：对每道题调一次 search_questions.py，判断是否复用已有 id：
 
 ```bash
-python skills/interview-review/scripts/search_questions.py --query "<question text>" --topics "<comma,separated>"
+python3 skills/interview-review/scripts/search_questions.py \
+  --query "<题目文本>" --topics "<topic1,topic2>"
 ```
 
-返回 top-3 相似度结果。Claude 判断：
-- 相似度高 + 技术内核相同 → 复用旧 id，把这次回答 append 到 `my_answer_history`，更新 `asked_in`
-- 看起来像但其实问的不一样 → 新建 q_id，但在 `linked_knowledge` 里互相挂上
+返回 top-3 相似题。相似度 > 0.4 且技术内核相同 → 填 `reuse_id`；否则留空。
 
-### 步骤 4：批量写入问题卡（脚本）
-
-Claude 整理成一个 JSON 数组喂给脚本，脚本负责分配 id、双向挂链、写文件：
-
-```bash
-python skills/interview-review/scripts/upsert_questions.py \
-  --interview <iv_id> --questions-json /tmp/questions_draft.json
-```
-
-`questions_draft.json` schema：
+**然后一次性输出完整分析 JSON**，写到 `/tmp/interview_draft.json`：
 
 ```json
-[
-  {
-    "reuse_id": "q_0042",          // 复用时填，新建时留空
-    "question": "...",
-    "topics": ["rl", "post-training"],
-    "my_answer_summary": "...",
-    "self_rating": 3,
-    "better_answer": "1-3 段",
-    "gaps_to_fill": ["..."],
-    "linked_knowledge_titles": ["GRPO", "DAPO"],   // 用标题或 slug，脚本帮你解析到 id
-    "difficulty": 3
-  }
-]
+{
+  "meta": {
+    "company": "某司",
+    "role": "LLM算法工程师",
+    "round": "技术二面",
+    "date": "2026-05-16",
+    "duration_min": 60,
+    "self_overall_rating": 3,
+    "interviewer_style": "深挖底层原理，追问数学细节"
+  },
+  "cleaned_transcript": "（清洗后的完整文本）",
+  "overall_rating": 3.5,
+  "overall_comment": "RL 方向基础扎实，但代码题临场发挥偏弱，系统设计题缺乏结构化表达。",
+  "next_prep": [
+    "重刷 GRPO 原论文 §3 方差分析",
+    "练习 LLM serving 系统设计的 STAR 结构表达"
+  ],
+  "questions": [
+    {
+      "reuse_id": "",
+      "question": "讲一下 GRPO 和 PPO 的区别，为什么 GRPO 不需要 critic",
+      "topics": ["rl", "post-training"],
+      "my_answer_summary": "讲了 group baseline 替代 value head，提到省显存，但没讲清方差问题",
+      "self_rating": 3,
+      "highlights": "方向正确，提到了 group relative baseline 的核心思想",
+      "weaknesses": "没讲清 group size 和方差的关系，面试官追问时没答上来",
+      "improvement": "补 DeepSeekMath 原论文 §3.2，重点看 Var(A) = Var(r)(1-1/G) 这个推导",
+      "better_answer": "PPO 用 critic 网络估 V(s) 计算 advantage...\nGRPO 对同一 prompt 采样 G 个输出，用 group 内 reward 均值做 baseline...\n好处是省 critic 显存；代价是 G 不够大时方差偏高...",
+      "gaps_to_fill": ["GRPO group size 与方差关系的数学推导"],
+      "linked_wiki_titles": ["GRPO"]
+    }
+  ]
+}
 ```
 
-`linked_knowledge_titles` 里如果某个标题在 wiki/ 里找不到对应条目，脚本会：
-1. 把它记录到 `<iv_dir>/missing_wiki.json`
-2. 在场次复盘的末尾提示 "以下知识点还不在库里，建议跑 kb-ingest 补上：..."
+**覆盖度要求**：一场 60 分钟面试通常 8-15 个实质问题。少于 5 个一定是漏了，回去重扫清洗后的文本。追问算独立问题，不要塞进主问题的回答里。
 
-不要让 Claude 自动创建知识条目——那是 `kb-ingest` 的活，分工明确。
-
-### 步骤 5：生成 review.md（脚本 + Claude）
+### 步骤 3：一键写入所有文件（脚本）
 
 ```bash
-python skills/interview-review/scripts/render_review.py --interview <iv_id>
+python3 skills/interview-review/scripts/process_interview.py \
+  --json /tmp/interview_draft.json
 ```
 
-脚本拼出骨架（按 CONTRACTS.md §3 的格式），Claude 在脚本输出基础上补"一句话总评"和"下次同公司应该准备"两节——这两节需要判断，脚本写不出。
+脚本一次完成：建目录 → 写 meta.yaml → 写 raw.md → 创建/更新问题卡 → 渲染 review.md → 传播 gaps → 输出 iv_id 和统计。
 
-### 步骤 6：写回 gaps（脚本）
+### 步骤 4：重建索引
 
 ```bash
-python skills/interview-review/scripts/propagate_gaps.py --interview <iv_id>
+python3 skills/shared/scripts/index.py
+python3 skills/shared/scripts/build_mindmap.py
+python3 skills/shared/scripts/validate.py
 ```
 
-这一步把每个问题卡的 `gaps_to_fill` append 到对应的 `linked_knowledge` 条目的 `gaps` 字段（去重），同时把场次 id 加到这些条目的 `linked_from_interviews`。这是闭环的关键，**不能省**。
+validate 报错就停下来修。
 
-### 步骤 7：重建索引
-
-```bash
-python skills/shared/scripts/index.py
-python skills/shared/scripts/build_mindmap.py
-python skills/shared/scripts/validate.py
-```
-
-validate 报错就停下来修，不要把不一致的状态留给下次。
-
-### 步骤 8：交付（Claude）
+### 步骤 5：交付（Claude）
 
 给用户：
-- 复盘 md 的路径
-- 这场新建/复用了多少题
-- 暴露的 top-3 gap（从 propagate 的 stdout 拿）
-- 一句建议：下次模拟面试要不要重点刷这场的某几道题
+- review.md 路径
+- 新建/复用题数
+- top-3 gap（从脚本 stdout 拿）
+- 一句建议
 
-## 写作风格规则
+---
 
-- 中文
-- `better_answer` 不要写成教科书，写成"你下次嘴里能蹦出来的那种长度和节奏"——1-3 段，每段 2-4 句
-- 数学公式只在不写就答不清的时候写
-- 不要在 `my_answer_summary` 里美化候选人，复盘的价值就在于看到真实差距
-- 不要在 `better_answer` 里编实验数字。如果原 paper 有具体数字且你能引用，引用并在 `linked_knowledge` 里挂上
+## review.md 格式
+
+```markdown
+# <公司> <轮次> 复盘 — <日期>
+_岗位_: ...  •  _时长_: ... 分钟  •  _自评_: .../5
+
+## 总体评价
+**评分**：3.5/5
+<一句话总评>
+
+**下次重点准备**：
+- ...
+
+---
+
+## Q1. <问题>  [[q_0001]]
+_topics_: ...  •  _自评_: .../5
+
+**我的回答**
+<my_answer_summary>
+
+**评分**：3/5  ✅ 亮点：<highlights>  ❌ 不足：<weaknesses>
+
+**改进方向**
+<improvement>
+
+**参考回答要点**
+<better_answer>
+
+---
+
+## 这场暴露的 Gap
+| 知识点 | Gap | 优先级 |
+|---|---|---|
+| GRPO | group size 与方差推导 | 高 |
+```
+
+---
 
 ## 反模式（不要做）
 
-- ❌ 一场面试只抽 3 个问题然后说"主要就这些"
-- ❌ 把追问合并到主问题的回答里
-- ❌ Claude 直接 vim 改 frontmatter YAML（让脚本干）
-- ❌ 给一个虚构的 url 当 source
-- ❌ 跳过 propagate_gaps（gap 没回流 = 闭环断了）
+- ❌ ASR 清洗时美化用户的回答内容
+- ❌ 一场面试只抽 3-5 道题（除非真的就问了这么多）
+- ❌ `better_answer` 里编数字或编 URL
+- ❌ 跳过脚本直接用文字回答（数据不落地 = 白做）
 - ❌ 在 review.md 里出现绝对路径
-- ❌ 自动创建 knowledge 条目（那是 kb-ingest 的活）
 
 ## 最终交付清单
 
-完成后必须确认：
-- [ ] `interviews/<iv_id>/meta.yaml`, `raw.md`, `questions.json`, `review.md` 都存在
-- [ ] 每个问题卡都有 `better_answer` 且非空
+- [ ] `interviews/<iv_id>/` 下有 meta.yaml、raw.md、questions.json、review.md
+- [ ] 每道题有 better_answer 且非空
 - [ ] `validate.py` 通过
-- [ ] 至少一个 gap 写回了 knowledge（如果一场面试啥 gap 都没暴露，要么你太强，要么你抽得太浅——多半是后者）
-- [ ] index 重建完成
-- [ ] mindmap 重建完成
+- [ ] index 和 mindmap 重建完成

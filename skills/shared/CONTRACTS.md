@@ -108,34 +108,32 @@ updated: 2026-05-16
 
 路径：`llm-kb/questions/<id>.md`
 
+精简 schema，只保留 mock-interview 和复盘所需的字段。
+
 ```yaml
 ---
 id: q_0042                     # 必填，自增（脚本分配，不要手填）
 question: "讲一下 GRPO 和 PPO 的区别，为什么不要 critic"   # 必填
 topics: [rl, post-training]    # 必填
-asked_in:                      # 出现过这道题的场次
+asked_in:                      # 出现过这道题的场次 id
   - iv_2026_05_xxx_1
 my_answer_history:             # 每次回答都 append，不删旧的
   - date: 2026-05-10
-    context: real_interview    # real_interview | mock_interview | self_review
-    summary: "讲了 group baseline 替代 value head，没讲清为什么 group 内 normalize 能降方差"
+    context: real_interview    # real_interview | mock_interview
+    summary: "讲了 group baseline 替代 value head，没讲清方差问题"
     self_rating: 3             # 1-5
 better_answer: |               # 必填，1-3 段，给未来的自己看
   ...
 gaps_to_fill:                  # 还没答好的子点，反向写入 wiki.gaps
-  - "GRPO group baseline 方差与 group size 的关系"
-linked_knowledge: [kn_2026_grpo]   # 关联的 wiki 条目（字段名保持 linked_knowledge 以兼容脚本）
-difficulty: 3                  # 1-5
-mastery: 0.6                   # 0-1，每次 my_answer_history 更新后重算
-tags: [classic, hot]
-created: 2026-05-10
-updated: 2026-05-14
+  - "GRPO group size 与方差的关系"
+linked_knowledge: [kn_2026_grpo]   # 关联的 wiki 条目 id（字段名保持以兼容脚本）
+mastery: 0.5                   # 0-1，由脚本自动计算，不要手填
 ---
 ```
 
-`mastery` 计算规则：取最近 3 次 `self_rating`，加权平均（最近一次 0.5、前两次各 0.25），归一化到 0-1：`mastery = (weighted_avg - 1) / 4`。
+`mastery` 计算：取最近 3 次 `self_rating`，加权平均（最近一次 0.5、前两次各 0.25），归一化到 0-1：`mastery = (weighted_avg - 1) / 4`。无历史时 mastery = 0。
 
-注意：`linked_knowledge` 字段名保留（与 wiki id `kn_xxx` 对应），以兼容现有脚本。
+注意：`linked_knowledge` 字段名保留（字段值是 wiki id `kn_xxx`），以兼容现有脚本。
 
 ---
 
@@ -146,7 +144,7 @@ updated: 2026-05-14
 ```
 iv_2026_05_xxx_1/
   meta.yaml
-  raw.md             # 原始输入，只写一次，不改
+  raw.md             # ASR 清洗后的文本，只写一次，不改（原始输入丢弃）
   questions.json     # 这场抽出的 q_id 列表（脚本生成）
   review.md          # 渲染好的复盘（人看的）
   missing_wiki.json  # 引用了但 wiki/ 里还没有的条目（可选）

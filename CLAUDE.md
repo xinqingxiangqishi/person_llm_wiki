@@ -18,7 +18,7 @@ pip3 install pyyaml
 
 **触发关键词**：「复盘」「面试」「面经」「刚面完」「整理一下面试」
 
-**必须做的事**：在回答之前，先读 `skills/interview-review/SKILL.md`，完整按照里面的 8 步流程走，**不要跳过任何一步，不要只用文字回答**。
+**必须做的事**：在回答之前，先读 `skills/interview-review/SKILL.md`，完整按照里面的 **3 步流程**走（ASR 预处理 → 完整分析生成 JSON → 一键写入），**不要跳过任何一步，不要只用文字回答**。核心脚本是 `process_interview.py`，一次调用完成所有文件写入。
 
 ### 2. frontier-ingest（前沿热点）
 
