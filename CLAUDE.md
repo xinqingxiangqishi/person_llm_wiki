@@ -2,18 +2,13 @@
 
 这是一个个人 LLM 求职知识管理工具集。**读完这个文件再开始干活**。
 
-## 环境初始化（每次新会话第一件事）
+## 环境初始化（只需做一次）
 
 ```bash
-export LLM_KB_ROOT=~/Documents/llm-kb
+pip3 install pyyaml
 ```
 
-如果 `~/Documents/llm-kb` 不存在，先建：
-```bash
-mkdir -p ~/Documents/llm-kb/{interviews,questions,frontier,wiki,mindmap,index,drafts}
-```
-
-依赖：`pip3 install pyyaml`（只需装一次）
+数据默认存在项目内的 `llm-kb/` 目录，无需额外配置。
 
 ---
 
